@@ -577,13 +577,13 @@ impl NativeResources {
                 driver.check("cuEventCreate", (driver.event_create)(&mut event, 2))?;
                 self.events.insert(name.clone(), event);
             }
-            for graph in &package.graphs {
+            for (graph_index, graph) in package.graphs.iter().enumerate() {
                 let mut handle = null_mut();
                 driver.check("cuGraphCreate", (driver.graph_create)(&mut handle, 0))?;
                 self.templates.push(handle);
                 let mut nodes = Vec::with_capacity(graph.node_count);
                 let mut records = archive.records(package, &graph.resource)?;
-                for _ in 0..graph.node_count {
+                for node_index in 0..graph.node_count {
                     let node = protobuf::node(records.read()?)?;
                     package.validate_node(&node)?;
                     if let Node::Kernel { function, .. } = &node {
@@ -620,10 +620,50 @@ impl NativeResources {
                                 kernel: null_mut(),
                                 context: null_mut(),
                             };
-                            driver.check(
-                                "cuGraphAddKernelNode_v2",
-                                (driver.graph_kernel)(&mut result, handle, null(), 0, &params),
-                            )?;
+                            let mut status = (driver.graph_kernel)(
+                                &mut result,
+                                handle,
+                                null(),
+                                0,
+                                &params,
+                            );
+                            if status != 0 && *shared > 0 {
+                                // The package records each function's dynamic
+                                // shared-memory opt-in as a snapshot, but a graph
+                                // node may require more than the snapshot holds
+                                // (the attribute is raised lazily by the tuning
+                                // process after capture). The node is the ground
+                                // truth: raise the function's limit to what the
+                                // node needs and add it once more.
+                                let raised = (driver.function_attribute)(
+                                    params.function,
+                                    8,
+                                    *shared as std::ffi::c_int,
+                                );
+                                if raised == 0 {
+                                    status = (driver.graph_kernel)(
+                                        &mut result,
+                                        handle,
+                                        null(),
+                                        0,
+                                        &params,
+                                    );
+                                }
+                            }
+                            if status != 0 {
+                                let symbol = package
+                                    .functions
+                                    .iter()
+                                    .find(|candidate| candidate.id == *function)
+                                    .map(|candidate| candidate.symbol.as_str())
+                                    .unwrap_or("<unknown>");
+                                return Err(invalid(format!(
+                                    "cuGraphAddKernelNode_v2 failed ({status}) at graph \
+                                     {graph_index} node {node_index}: kernel {symbol} \
+                                     (id {function}) grid {grid:?} block {block:?} \
+                                     shared {shared}"
+                                )));
+                            }
                             for attribute in attributes {
                                 let bytes = self.bind(&attribute.value)?;
                                 let mut value = [0u64; 8];
