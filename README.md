@@ -71,7 +71,10 @@ Details and exact commands: [docs/rtx-5090.md](docs/rtx-5090.md).
 ## Roadmap
 
 - Upstream the Helios fix (with the cross-rank snapshot evidence).
-- Validate the remaining Flare catalog on 5090: `glm-5.3-flash` TP4 next.
+- Remaining catalog, sized honestly: `glm-5.3-flash` does **not** fit
+  4× 32 GB (304B routed experts = 42.8 GiB/rank at NVFP4 before dense
+  weights or KV). It belongs to the EXL3/hybrid tier, not this fork's
+  resident path; `deepseek-v4.1-flash` is in the same weight class.
 - Weight-format yardstick for this class of box: NVFP4 vs EXL3 trellis
   4–5 bpw vs FP8 (KL/top-1 vs BF16, one harness), then the serving-leg
   comparison against vLLM on the same checkpoint.
